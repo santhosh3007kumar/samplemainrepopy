@@ -29,7 +29,7 @@ jobs:
           echo "Actor=$GITHUB_ACTOR"    
 
       - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::899867382718:role/mygithubactionrole
           aws-region: ${{ env.AWS_REGION }}
