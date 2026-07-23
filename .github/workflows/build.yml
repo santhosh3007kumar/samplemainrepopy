@@ -48,11 +48,7 @@ jobs:
           role-to-assume: arn:aws:iam::899867382718:role/mygithubactionrole
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Create ECR Repository if not exists
-        run: |
-          aws ecr describe-repositories --repository-names $ECR_REPOSITORY || \
-          aws ecr create-repository --repository-name $ECR_REPOSITORY
-
+    
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
