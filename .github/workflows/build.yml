@@ -5,10 +5,6 @@ on:
     branches:
       - main
 
-permissions:
-  id-token: write
-  contents: read
-
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: sample-app
@@ -22,33 +18,13 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Debug GitHub Context
-        run: |
-          echo "Repository=$GITHUB_REPOSITORY"
-          echo "Ref=$GITHUB_REF"
-          echo "Actor=$GITHUB_ACTOR"
-
-      - name: Show OIDC Token Claims
-        shell: bash
-        run: |
-          TOKEN=$(curl -s \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r '.value')
-
-          python3 - <<EOF
-          import base64, json
-          payload = "$TOKEN".split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-          print(json.dumps(json.loads(base64.urlsafe_b64decode(payload)), indent=2))
-          EOF
-
-      - name: Configure AWS Credentials (OIDC)
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: arn:aws:iam::899867382718:role/mygithubactionrole
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-    
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
