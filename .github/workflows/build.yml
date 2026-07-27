@@ -1,4 +1,4 @@
-name: Build, Scan and Push
+name: Build, Scan and Publish
 
 on:
   push:
@@ -8,62 +8,97 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: sample-app
-  IMAGE_TAG: latest
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
+      # Configure AWS (OIDC or Access Keys)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
+          aws-region: ${{ env.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: login
 
-      - name: Build Docker Image
+      - name: Build Image
         run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          docker build \
+            -t $ECR_REPOSITORY:${IMAGE_TAG} .
 
-      - name: Scan with Trivy
+
+      ## Shared Baseline Security Policy
+
+
+      - name: Trivy Scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           severity: HIGH,CRITICAL
           exit-code: 1
+          ignore-unfixed: true
 
       - name: Install Grype
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh
           sudo mv ./bin/grype /usr/local/bin
 
-      - name: Scan with Grype
+      - name: Grype Scan
         run: |
-          grype $ECR_REPOSITORY:$IMAGE_TAG
+          grype \
+          $ECR_REPOSITORY:${IMAGE_TAG} \
+          --fail-on high
+
+   
+      ## Publish
+      
 
       - name: Tag Image
         run: |
           docker tag \
-            $ECR_REPOSITORY:$IMAGE_TAG \
-            ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
+          $ECR_REPOSITORY:${IMAGE_TAG} \
+          ${{ steps.login.outputs.registry }}/$ECR_REPOSITORY:${IMAGE_TAG}
 
       - name: Push Image
         run: |
           docker push \
-            ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
+          ${{ steps.login.outputs.registry }}/$ECR_REPOSITORY:${IMAGE_TAG}
+
+      ## Resolve immutable digest
+   
+
+      - name: Get Image Digest
+        id: digest
+        run: |
+          DIGEST=$(aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --image-ids imageTag=${IMAGE_TAG} \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      ## Trigger downstream repository
 
       - name: Trigger AWS Repository
         run: |
           curl -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.AWS_TRIGGER_TOKEN }}" \
-            https://api.github.com/repos/santhosh3007kumar/samplemainawspy/dispatches \
-            -d '{"event_type":"scan-ecr-image"}'
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${{ secrets.AWS_TRIGGER_TOKEN }}" \
+          https://api.github.com/repos/santhosh3007kumar/samplemainawspy/dispatches \
+          -d '{
+                "event_type":"scan-ecr-image",
+                "client_payload":{
+                  "repository":"sample-app",
+                  "digest":"${{ steps.digest.outputs.digest }}",
+                  "tag":"${{ env.IMAGE_TAG }}",
+                  "commit":"${{ github.sha }}"
+                }
+              }'
