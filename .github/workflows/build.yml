@@ -14,36 +14,68 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+    permissions:
+      contents: read
 
-      # Configure AWS (OIDC or Access Keys)
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          aws-region: ${{ env.AWS_REGION }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
 
-      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Login to Amazon ECR
         id: login
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build Image
+   
+      # Build Docker Image
+    
+
+      - name: Build Docker Image
         run: |
           docker build \
             -t $ECR_REPOSITORY:${IMAGE_TAG} .
 
+  
+      # Save Image as Artifact
 
-      ## Shared Baseline Security Policy
+      - name: Save Docker Image
+        run: |
+          docker save \
+            -o sample-app.tar \
+            $ECR_REPOSITORY:${IMAGE_TAG}
 
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: sample-app.tar
+          retention-days: 7
+
+  
+      # Shared Baseline Security Scan
+     
 
       - name: Trivy Scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           severity: HIGH,CRITICAL
-          exit-code: 1
+          exit-code: "1"
           ignore-unfixed: true
+          format: table
+          output: trivy-report.txt
+
+      - name: Upload Trivy Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+          retention-days: 30
 
       - name: Install Grype
         run: |
@@ -53,26 +85,36 @@ jobs:
       - name: Grype Scan
         run: |
           grype \
-          $ECR_REPOSITORY:${IMAGE_TAG} \
-          --fail-on high
+            $ECR_REPOSITORY:${IMAGE_TAG} \
+            --fail-on high \
+            -o table \
+            > grype-report.txt
+
+      - name: Upload Grype Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: grype-report
+          path: grype-report.txt
+          retention-days: 30
 
    
-      ## Publish
+      # Publish Image
       
 
       - name: Tag Image
         run: |
           docker tag \
-          $ECR_REPOSITORY:${IMAGE_TAG} \
-          ${{ steps.login.outputs.registry }}/$ECR_REPOSITORY:${IMAGE_TAG}
+            $ECR_REPOSITORY:${IMAGE_TAG} \
+            ${{ steps.login.outputs.registry }}/$ECR_REPOSITORY:${IMAGE_TAG}
 
       - name: Push Image
         run: |
           docker push \
-          ${{ steps.login.outputs.registry }}/$ECR_REPOSITORY:${IMAGE_TAG}
+            ${{ steps.login.outputs.registry }}/$ECR_REPOSITORY:${IMAGE_TAG}
 
-      ## Resolve immutable digest
-   
+    
+      # Resolve Immutable Image Digest
+     
 
       - name: Get Image Digest
         id: digest
@@ -83,22 +125,26 @@ jobs:
             --query 'imageDetails[0].imageDigest' \
             --output text)
 
+          echo "Digest: $DIGEST"
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
-      ## Trigger downstream repository
-
+     
+      # Trigger Downstream Repository
+  
       - name: Trigger AWS Repository
         run: |
-          curl -X POST \
-          -H "Accept: application/vnd.github+json" \
-          -H "Authorization: Bearer ${{ secrets.AWS_TRIGGER_TOKEN }}" \
-          https://api.github.com/repos/santhosh3007kumar/samplemainawspy/dispatches \
-          -d '{
-                "event_type":"scan-ecr-image",
-                "client_payload":{
-                  "repository":"sample-app",
-                  "digest":"${{ steps.digest.outputs.digest }}",
-                  "tag":"${{ env.IMAGE_TAG }}",
-                  "commit":"${{ github.sha }}"
-                }
-              }'
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.AWS_TRIGGER_TOKEN }}" \
+            https://api.github.com/repos/santhosh3007kumar/samplemainawspy/dispatches \
+            -d '{
+              "event_type":"scan-ecr-image",
+              "client_payload":{
+                "repository":"sample-app",
+                "digest":"${{ steps.digest.outputs.digest }}",
+                "tag":"${{ env.IMAGE_TAG }}",
+                "commit":"${{ github.sha }}",
+                "run_id":"${{ github.run_id }}"
+              }
+            }'
