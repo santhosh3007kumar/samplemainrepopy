@@ -1,0 +1,30 @@
+version: "1.0"
+
+repository: veil-proxy
+role: upstream
+
+policy:
+  severity:
+    - HIGH
+    - CRITICAL
+
+  ignore_unfixed: true
+
+  fail_on_fix_available: true
+
+scanners:
+  trivy:
+    enabled: true
+    allowlist: .github/security/.trivyignore
+
+  grype:
+    enabled: true
+    allowlist: .github/security/.grype.yaml
+
+publishing:
+  publish_only_if_policy_passes: true
+
+downstream:
+  inherit_policy: true
+  may_tighten: true
+  may_loosen: false
